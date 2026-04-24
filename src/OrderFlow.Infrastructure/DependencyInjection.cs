@@ -1,11 +1,17 @@
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
+using OrderFlow.Application.Abstractions.Notifications;
+using OrderFlow.Application.Abstractions.Payments;
 using OrderFlow.Application.Abstractions.Persistence;
+using OrderFlow.Application.Common.Resilience;
 using OrderFlow.Infrastructure.Outbox;
 using OrderFlow.Infrastructure.Persistence;
 using OrderFlow.Infrastructure.Persistence.Interceptors;
 using OrderFlow.Infrastructure.Repositories;
+using OrderFlow.Infrastructure.Services;
+using Polly;
+using Polly.Retry;
 
 namespace OrderFlow.Infrastructure;
 
@@ -17,7 +23,9 @@ public static class DependencyInjection
 
     /// <summary>
     /// Registers the EF Core <see cref="AppDbContext"/> (Npgsql), repositories,
-    /// unit of work, outbox interceptor, and the <see cref="OutboxPublisherService"/>.
+    /// unit of work, outbox interceptor, the <see cref="OutboxPublisherService"/>,
+    /// simulated payment/notification services, and the Polly pipeline used by
+    /// the domain event handlers.
     /// </summary>
     public static IServiceCollection AddInfrastructure(
         this IServiceCollection services,
@@ -54,6 +62,22 @@ public static class DependencyInjection
 
         services.Configure<OutboxOptions>(configuration.GetSection(OutboxOptions.SectionName));
         services.AddHostedService<OutboxPublisherService>();
+
+        services.AddScoped<IPaymentGateway, LoggingPaymentGateway>();
+        services.AddScoped<IEmailNotifier, LoggingEmailNotifier>();
+
+        services.AddResiliencePipeline(ResiliencePipelines.EventHandler, pipeline =>
+        {
+            pipeline.AddRetry(new RetryStrategyOptions
+            {
+                MaxRetryAttempts = 3,
+                BackoffType = DelayBackoffType.Exponential,
+                UseJitter = true,
+                Delay = TimeSpan.FromMilliseconds(200),
+                ShouldHandle = new PredicateBuilder().Handle<Exception>(ex =>
+                    ex is not OperationCanceledException)
+            });
+        });
 
         return services;
     }
