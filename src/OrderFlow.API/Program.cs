@@ -2,6 +2,10 @@ using System.Reflection;
 using HealthChecks.UI.Client;
 using Microsoft.AspNetCore.Diagnostics.HealthChecks;
 using Microsoft.OpenApi.Models;
+using OrderFlow.API.Middleware;
+using OrderFlow.API.Seeding;
+using OrderFlow.Application;
+using OrderFlow.Infrastructure;
 using Serilog;
 
 Log.Logger = new LoggerConfiguration()
@@ -39,6 +43,11 @@ try
         }
     });
 
+    builder.Services.AddMemoryCache();
+
+    builder.Services.AddApplication();
+    builder.Services.AddInfrastructure(builder.Configuration);
+
     var healthChecksBuilder = builder.Services.AddHealthChecks();
     var connectionString = builder.Configuration.GetConnectionString("Postgres");
     if (!string.IsNullOrWhiteSpace(connectionString))
@@ -48,7 +57,13 @@ try
 
     var app = builder.Build();
 
+    // Pipeline order is deliberate:
+    //   Serilog request logging → GlobalExceptionHandler → Idempotency → routing/endpoints.
+    // Putting the exception handler before idempotency means a cached response is
+    // only written when the downstream pipeline produced one cleanly.
     app.UseSerilogRequestLogging();
+    app.UseMiddleware<GlobalExceptionHandlerMiddleware>();
+    app.UseMiddleware<IdempotencyMiddleware>();
 
     if (app.Environment.IsDevelopment())
     {
@@ -76,6 +91,14 @@ try
 
     app.UseAuthorization();
     app.MapControllers();
+
+    // Apply migrations + seed demo data at startup.
+    // Skipped under the IntegrationTests environment so tests can
+    // provision and seed their own Testcontainers-backed database.
+    if (!app.Environment.IsEnvironment("IntegrationTests"))
+    {
+        await DatabaseSeeder.MigrateAndSeedAsync(app.Services);
+    }
 
     await app.RunAsync();
 }
