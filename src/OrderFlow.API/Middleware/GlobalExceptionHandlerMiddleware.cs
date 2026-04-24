@@ -1,5 +1,6 @@
 using System.Text.Json;
 using Microsoft.AspNetCore.Mvc;
+using OrderFlow.Application.Common.Exceptions;
 using OrderFlow.Domain.Exceptions;
 using ApplicationValidationException = OrderFlow.Application.Common.Exceptions.ValidationException;
 
@@ -95,6 +96,11 @@ public sealed class GlobalExceptionHandlerMiddleware(
                 StatusCodes.Status409Conflict,
                 "Invalid order state",
                 new Dictionary<string, object?>()),
+
+            ConcurrencyConflictException => (
+                StatusCodes.Status409Conflict,
+                "Concurrent modification",
+                new Dictionary<string, object?> { ["retryable"] = true }),
 
             DomainException => (
                 StatusCodes.Status400BadRequest,

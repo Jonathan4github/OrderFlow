@@ -27,6 +27,7 @@ public static class DependencyInjection
         ArgumentNullException.ThrowIfNull(configuration);
 
         services.AddSingleton<OutboxMessageInterceptor>();
+        services.AddSingleton<RowVersionInterceptor>();
 
         var connectionString = configuration.GetConnectionString(ConnectionStringName)
             ?? throw new InvalidOperationException(
@@ -41,7 +42,9 @@ public static class DependencyInjection
                     maxRetryDelay: TimeSpan.FromSeconds(2),
                     errorCodesToAdd: null);
             });
-            options.AddInterceptors(sp.GetRequiredService<OutboxMessageInterceptor>());
+            options.AddInterceptors(
+                sp.GetRequiredService<RowVersionInterceptor>(),
+                sp.GetRequiredService<OutboxMessageInterceptor>());
         });
 
         services.AddScoped<IUnitOfWork, UnitOfWork>();
