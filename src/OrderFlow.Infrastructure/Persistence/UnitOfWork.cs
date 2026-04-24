@@ -1,6 +1,7 @@
 using System.Data;
 using Microsoft.EntityFrameworkCore;
 using OrderFlow.Application.Abstractions.Persistence;
+using OrderFlow.Application.Common.Exceptions;
 
 namespace OrderFlow.Infrastructure.Persistence;
 
@@ -15,8 +16,21 @@ public sealed class UnitOfWork(AppDbContext db) : IUnitOfWork
     private readonly AppDbContext _db = db;
 
     /// <inheritdoc />
-    public Task<int> SaveChangesAsync(CancellationToken cancellationToken = default) =>
-        _db.SaveChangesAsync(cancellationToken);
+    public async Task<int> SaveChangesAsync(CancellationToken cancellationToken = default)
+    {
+        try
+        {
+            return await _db.SaveChangesAsync(cancellationToken);
+        }
+        catch (DbUpdateConcurrencyException ex)
+        {
+            // Translate EF's infrastructure-specific exception into an
+            // application-level type the API layer can map cleanly.
+            throw new ConcurrencyConflictException(
+                "A concurrent update prevented this operation from completing. Please retry.",
+                ex);
+        }
+    }
 
     /// <inheritdoc />
     public Task<T> ExecuteInTransactionAsync<T>(
