@@ -7,6 +7,9 @@ using OrderFlow.API.Middleware;
 using OrderFlow.API.Seeding;
 using OrderFlow.Application;
 using OrderFlow.Infrastructure;
+using OrderFlow.Infrastructure.Outbox;
+using OpenTelemetry.Resources;
+using OpenTelemetry.Trace;
 using Serilog;
 
 Log.Logger = new LoggerConfiguration()
@@ -49,6 +52,40 @@ try
     builder.Services.Configure<IdempotencyOptions>(
         builder.Configuration.GetSection(IdempotencyOptions.SectionName));
 
+    var observability = new ObservabilityOptions();
+    builder.Configuration.GetSection(ObservabilityOptions.SectionName).Bind(observability);
+    builder.Services.Configure<ObservabilityOptions>(
+        builder.Configuration.GetSection(ObservabilityOptions.SectionName));
+
+    if (observability.OpenTelemetryEnabled)
+    {
+        builder.Services.AddOpenTelemetry()
+            .ConfigureResource(resource => resource.AddService(observability.ServiceName))
+            .WithTracing(tracing =>
+            {
+                tracing
+                    .AddAspNetCoreInstrumentation()
+                    .AddHttpClientInstrumentation()
+                    .AddEntityFrameworkCoreInstrumentation(o =>
+                    {
+                        o.SetDbStatementForText = true;
+                    })
+                    .AddSource("OrderFlow.*");
+
+                if (!string.IsNullOrWhiteSpace(observability.OtlpEndpoint))
+                {
+                    tracing.AddOtlpExporter(opt =>
+                    {
+                        opt.Endpoint = new Uri(observability.OtlpEndpoint);
+                    });
+                }
+                else
+                {
+                    tracing.AddConsoleExporter();
+                }
+            });
+    }
+
     builder.Services.AddApplication();
     builder.Services.AddInfrastructure(builder.Configuration);
 
@@ -58,14 +95,38 @@ try
     {
         healthChecksBuilder.AddNpgSql(connectionString, name: "postgres", tags: ["db", "ready"]);
     }
+    healthChecksBuilder.AddCheck<OutboxHealthCheck>(
+        name: "outbox",
+        failureStatus: Microsoft.Extensions.Diagnostics.HealthChecks.HealthStatus.Degraded,
+        tags: ["outbox", "ready"]);
 
     var app = builder.Build();
 
     // Pipeline order is deliberate:
-    //   Serilog request logging → GlobalExceptionHandler → Idempotency → routing/endpoints.
-    // Putting the exception handler before idempotency means a cached response is
-    // only written when the downstream pipeline produced one cleanly.
-    app.UseSerilogRequestLogging();
+    //   CorrelationId → SerilogRequestLogging → GlobalExceptionHandler → Idempotency → routing.
+    //   * CorrelationId runs first so every log entry, including failures,
+    //     carries it.
+    //   * SerilogRequestLogging emits the per-request summary line and reads
+    //     the correlation id from LogContext.
+    //   * Exception handler before idempotency so failed responses aren't
+    //     pinned in the cache.
+    app.UseMiddleware<CorrelationIdMiddleware>();
+    app.UseSerilogRequestLogging(options =>
+    {
+        options.EnrichDiagnosticContext = (diagnosticContext, httpContext) =>
+        {
+            diagnosticContext.Set("RequestHost", httpContext.Request.Host.Value ?? string.Empty);
+            diagnosticContext.Set("RequestScheme", httpContext.Request.Scheme);
+            diagnosticContext.Set("UserAgent",
+                httpContext.Request.Headers.UserAgent.ToString());
+
+            if (httpContext.Items.TryGetValue(CorrelationIdMiddleware.ItemsKey, out var corr) &&
+                corr is string correlationId)
+            {
+                diagnosticContext.Set(CorrelationIdMiddleware.ItemsKey, correlationId);
+            }
+        };
+    });
     app.UseMiddleware<GlobalExceptionHandlerMiddleware>();
     app.UseMiddleware<IdempotencyMiddleware>();
 
