@@ -1,10 +1,12 @@
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
+using OrderFlow.Application.Abstractions.Idempotency;
 using OrderFlow.Application.Abstractions.Notifications;
 using OrderFlow.Application.Abstractions.Payments;
 using OrderFlow.Application.Abstractions.Persistence;
 using OrderFlow.Application.Common.Resilience;
+using OrderFlow.Infrastructure.Idempotency;
 using OrderFlow.Infrastructure.Outbox;
 using OrderFlow.Infrastructure.Persistence;
 using OrderFlow.Infrastructure.Persistence.Interceptors;
@@ -65,6 +67,9 @@ public static class DependencyInjection
 
         services.AddScoped<IPaymentGateway, LoggingPaymentGateway>();
         services.AddScoped<IEmailNotifier, LoggingEmailNotifier>();
+
+        services.AddScoped<IIdempotencyStore, EfIdempotencyStore>();
+        services.AddHostedService<IdempotencyCleanupService>();
 
         services.AddResiliencePipeline(ResiliencePipelines.EventHandler, pipeline =>
         {
