@@ -2,6 +2,7 @@ using System.Reflection;
 using HealthChecks.UI.Client;
 using Microsoft.AspNetCore.Diagnostics.HealthChecks;
 using Microsoft.OpenApi.Models;
+using OrderFlow.API.Configuration;
 using OrderFlow.API.Middleware;
 using OrderFlow.API.Seeding;
 using OrderFlow.Application;
@@ -44,6 +45,9 @@ try
     });
 
     builder.Services.AddMemoryCache();
+
+    builder.Services.Configure<IdempotencyOptions>(
+        builder.Configuration.GetSection(IdempotencyOptions.SectionName));
 
     builder.Services.AddApplication();
     builder.Services.AddInfrastructure(builder.Configuration);

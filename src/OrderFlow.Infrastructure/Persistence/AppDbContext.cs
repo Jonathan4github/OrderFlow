@@ -2,6 +2,7 @@ using Microsoft.EntityFrameworkCore;
 using OrderFlow.Domain.Inventories;
 using OrderFlow.Domain.Orders;
 using OrderFlow.Domain.Products;
+using OrderFlow.Infrastructure.Idempotency;
 using OrderFlow.Infrastructure.Outbox;
 
 namespace OrderFlow.Infrastructure.Persistence;
@@ -24,6 +25,9 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options) : DbCon
 
     /// <summary>Outbox queue (infrastructure concern, not a domain aggregate).</summary>
     public DbSet<OutboxMessage> OutboxMessages => Set<OutboxMessage>();
+
+    /// <summary>Idempotency-key records (infrastructure concern).</summary>
+    public DbSet<IdempotencyRecord> IdempotencyRecords => Set<IdempotencyRecord>();
 
     /// <inheritdoc />
     protected override void OnModelCreating(ModelBuilder modelBuilder)
